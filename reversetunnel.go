@@ -25,16 +25,16 @@ func NewReverseTunnel(ctx context.Context, local, remote Endpoint) Tunnel {
 	}
 }
 
-func (t *reverseTunnel) Bind(s *Session) error {
-	if s.client == nil {
+func (t *reverseTunnel) Bind(c *Client) error {
+	if c.client == nil {
 		return fmt.Errorf("bind failed, session not connected")
 	}
 
-	t.ctx, t.cancel = context.WithCancel(s.ctx)
+	t.ctx, t.cancel = context.WithCancel(c.ctx)
 	t.wait, t.ctx = errgroup.WithContext(t.ctx)
 
 	var err error
-	t.listener, t.local.Port, err = bind(t.ctx, t, t.wait, s.client.Listen, net.Dial)
+	t.listener, t.local.Port, err = bind(t.ctx, t, t.wait, c.client.Listen, net.Dial)
 	if err != nil {
 		return fmt.Errorf("unable to bind tunnel: %w", err)
 	}

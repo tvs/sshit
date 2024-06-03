@@ -11,7 +11,7 @@ import (
 )
 
 type Tunnel interface {
-	Bind(*Session) error
+	Bind(*Client) error
 	Close() []error
 	Local() Endpoint
 	Remote() Endpoint
