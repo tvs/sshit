@@ -71,9 +71,13 @@ func (c *Client) Run(cmd string) (string, string, error) {
 	go func() {
 		sessDoneChan <- session.Wait()
 	}()
+	defer close(sessDoneChan)
 
 	tChan := time.After(c.Config.Timeout)
 	stdoutChan, stderrChan, readDoneChan := read(outPipe, errPipe)
+	defer close(stdoutChan)
+	defer close(stderrChan)
+	defer close(readDoneChan)
 
 	var stdoutStr, stderrStr string
 loop:
