@@ -126,18 +126,12 @@ loop:
 }
 
 func (c *Client) Copy(source string, target string) error {
-	closed := false
-
 	// TODO(tvs): Deal with timeouts
 	session, err := c.client.NewSession()
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if !closed {
-			session.Close()
-		}
-	}()
+	defer session.Close()
 
 	s, err := os.Open(source)
 	if err != nil {
@@ -154,6 +148,8 @@ func (c *Client) Copy(source string, target string) error {
 	if err != nil {
 		return err
 	}
+	// This might throw an error once we've run successfully, but we can ignore
+	// it. This at least ensures we clean up if we error out elsewhere.
 	defer w.Close()
 
 	stdout, err := session.StdoutPipe()
@@ -169,12 +165,12 @@ func (c *Client) Copy(source string, target string) error {
 		return fmt.Errorf("unable to complete write: %w", err)
 	}
 
-	if err := session.Close(); err != nil {
-		return fmt.Errorf("unable to close SCP session: %w", err)
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("unable to close write stream: %w", err)
 	}
-	closed = true
 
 	if err := session.Wait(); err != nil {
+		fmt.Printf("Wait err: %+v\n", err)
 		return fmt.Errorf("error with remote SCP session: %w", err)
 	}
 
@@ -257,10 +253,8 @@ func checkResponse(reader io.Reader) error {
 
 	if buf[0] > 0 {
 		scanner := bufio.NewScanner(reader)
-		for scanner.Scan() {
-			msg := scanner.Text()
-			return fmt.Errorf("%s", msg)
-		}
+		msg := scanner.Text()
+		return fmt.Errorf("%s", msg)
 	}
 
 	return nil
