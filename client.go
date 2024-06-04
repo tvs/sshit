@@ -3,7 +3,11 @@ package sshit
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -122,6 +126,58 @@ loop:
 }
 
 func (c *Client) Copy(source string, target string) error {
+	closed := false
+
+	// TODO(tvs): Deal with timeouts
+	session, err := c.client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if !closed {
+			session.Close()
+		}
+	}()
+
+	s, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	stat, err := s.Stat()
+	if err != nil {
+		return err
+	}
+
+	w, err := session.StdinPipe()
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		return err
+	}
+
+	if err := session.Start(fmt.Sprintf("scp -tr %s", target)); err != nil {
+		return fmt.Errorf("unable to initiate SCP: %w", err)
+	}
+
+	if err := write(w, s, stdout, stat.Size(), stat.Mode(), target); err != nil {
+		return fmt.Errorf("unable to complete write: %w", err)
+	}
+
+	if err := session.Close(); err != nil {
+		return fmt.Errorf("unable to close SCP session: %w", err)
+	}
+	closed = true
+
+	if err := session.Wait(); err != nil {
+		return fmt.Errorf("error with remote SCP session: %w", err)
+	}
+
 	return nil
 }
 
@@ -159,4 +215,53 @@ func readToChannel(reader io.Reader, channel chan string) error {
 	}
 
 	return scanner.Err()
+}
+
+// write sends the file over the writer using the SCP protocol and returns an
+// error if SCP issues one.
+func write(writer io.Writer, reader, stdout io.Reader, size int64, mode fs.FileMode, target string) error {
+	targetBase := filepath.Base(target)
+
+	_, err := fmt.Fprintln(writer, fmt.Sprintf("C0%o", mode), size, targetBase)
+	if err != nil {
+		return err
+	}
+
+	if err := checkResponse(stdout); err != nil {
+		return err
+	}
+
+	_, err = io.Copy(writer, reader)
+	if err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprint(writer, "\x00")
+	if err != nil {
+		return err
+	}
+
+	if err := checkResponse(stdout); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func checkResponse(reader io.Reader) error {
+	buf := make([]uint8, 1)
+	_, err := reader.Read(buf)
+	if err != nil {
+		return err
+	}
+
+	if buf[0] > 0 {
+		scanner := bufio.NewScanner(reader)
+		for scanner.Scan() {
+			msg := scanner.Text()
+			return fmt.Errorf("%s", msg)
+		}
+	}
+
+	return nil
 }
